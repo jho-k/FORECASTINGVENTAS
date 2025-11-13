@@ -31,6 +31,20 @@ PRIMARY_COLOR = "#667eea"
 SECONDARY_COLOR = "#764ba2"
 ACCENT_COLOR = "#f093fb"
 
+# TASAS DE CAMBIO (EUR como base)
+EXCHANGE_RATES = {
+    "EUR": 1.0,
+    "USD": 1.10,      # 1 EUR = 1.10 USD
+    "PEN": 4.20       # 1 EUR = 4.20 PEN (Soles Peruanos)
+}
+
+# MONEDAS DISPONIBLES
+CURRENCIES = {
+    "EUR": {"symbol": "€", "name": "Euros", "code": "EUR"},
+    "USD": {"symbol": "$", "name": "Dólares", "code": "USD"},
+    "PEN": {"symbol": "S/.", "name": "Soles", "code": "PEN"}
+}
+
 # Estilos CSS personalizados
 st.markdown("""
     <style>
@@ -113,6 +127,29 @@ def recalculate_price_features(df):
     df['ratio_precio'] = df['precio_venta'] / df['precio_competencia']
     return df
 
+def convert_currency(value_eur, from_currency="EUR", to_currency="EUR"):
+    """Convierte un valor de una moneda a otra usando EUR como base"""
+    if from_currency not in EXCHANGE_RATES or to_currency not in EXCHANGE_RATES:
+        return value_eur
+    
+    # Convertir a EUR si no lo es
+    if from_currency != "EUR":
+        value_eur = value_eur / EXCHANGE_RATES[from_currency]
+    
+    # Convertir de EUR a la moneda destino
+    return value_eur * EXCHANGE_RATES[to_currency]
+
+def format_currency_display(value_eur, currency_code="EUR"):
+    """Formatea un valor monetario con la moneda especificada"""
+    converted_value = convert_currency(value_eur, from_currency="EUR", to_currency=currency_code)
+    symbol = CURRENCIES[currency_code]["symbol"]
+    
+    # Formatear según la moneda (PEN usa 0 decimales, USD y EUR usan 2)
+    if currency_code == "PEN":
+        return f"{symbol}{converted_value:,.0f}"
+    else:
+        return f"{symbol}{converted_value:,.2f}"
+
 def get_feature_columns():
     """Obtiene las columnas de features esperadas por el modelo"""
     return model.feature_names_in_
@@ -174,6 +211,17 @@ def predict_recursive(df_product, model):
 
 with st.sidebar:
     st.markdown("## 🎮 Controles de Simulación")
+    
+    # Selector de moneda
+    st.markdown("### 💱 Selecciona tu Moneda")
+    currency_option = st.radio(
+        "Moneda:",
+        list(CURRENCIES.keys()),
+        format_func=lambda x: f"{CURRENCIES[x]['symbol']} {CURRENCIES[x]['name']}",
+        label_visibility="collapsed"
+    )
+    
+    st.divider()
     
     # Selector de producto
     producto_seleccionado = st.selectbox(
@@ -291,16 +339,18 @@ if 'predictions' in st.session_state:
         )
     
     with col2:
+        ingresos_formateado = format_currency_display(total_ingresos, currency_option)
         st.metric(
-            "💶 Ingresos Totales",
-            f"€{total_ingresos:,.2f}",
+            "� Ingresos Totales",
+            ingresos_formateado,
             delta=None
         )
     
     with col3:
+        precio_formateado = format_currency_display(precio_promedio, currency_option)
         st.metric(
-            "💰 Precio Promedio",
-            f"€{precio_promedio:.2f}",
+            "� Precio Promedio",
+            precio_formateado,
             delta=None
         )
     
@@ -374,18 +424,25 @@ if 'predictions' in st.session_state:
     df_tabla['ingresos_diarios'] = df_tabla['prediccion'] * df_tabla['precio_venta']
     
     # Renombrar columnas para la tabla
+    moneda_symbol = CURRENCIES[currency_option]["symbol"]
     df_tabla.columns = [
-        'Fecha', 'Día Semana', 'Precio Venta (€)', 
-        'Competencia (€)', 'Descuento', 'Unidades', 'Ingresos (€)'
+        'Fecha', 'Día Semana', f'Precio Venta ({moneda_symbol})', 
+        f'Competencia ({moneda_symbol})', 'Descuento', 'Unidades', f'Ingresos ({moneda_symbol})'
     ]
     
-    # Formatear
+    # Formatear con conversión de moneda
     df_tabla['Fecha'] = df_tabla['Fecha'].dt.strftime('%d/%m/%Y')
-    df_tabla['Precio Venta (€)'] = df_tabla['Precio Venta (€)'].apply(lambda x: f'€{x:.2f}')
-    df_tabla['Competencia (€)'] = df_tabla['Competencia (€)'].apply(lambda x: f'€{x:.2f}')
+    df_tabla[f'Precio Venta ({moneda_symbol})'] = df_tabla[f'Precio Venta ({moneda_symbol})'].apply(
+        lambda x: format_currency_display(x, currency_option)
+    )
+    df_tabla[f'Competencia ({moneda_symbol})'] = df_tabla[f'Competencia ({moneda_symbol})'].apply(
+        lambda x: format_currency_display(x, currency_option)
+    )
     df_tabla['Descuento'] = df_tabla['Descuento'].apply(lambda x: f'{x*100:+.2f}%')
     df_tabla['Unidades'] = df_tabla['Unidades'].apply(lambda x: f'{x:.0f}')
-    df_tabla['Ingresos (€)'] = df_tabla['Ingresos (€)'].apply(lambda x: f'€{x:,.2f}')
+    df_tabla[f'Ingresos ({moneda_symbol})'] = df_tabla[f'Ingresos ({moneda_symbol})'].apply(
+        lambda x: format_currency_display(x, currency_option)
+    )
     
     # Mostrar tabla con highlight para Black Friday
     st.dataframe(
@@ -426,6 +483,7 @@ if 'predictions' in st.session_state:
     for col_idx, (scenario_name, data) in enumerate(scenarios_data.items()):
         with cols[col_idx]:
             col_color = PRIMARY_COLOR if scenario_name == st.session_state.scenario else SECONDARY_COLOR
+            ingresos_convertidos = format_currency_display(data["ingresos"], currency_option)
             
             st.markdown(f"""
                 <div style='
@@ -438,7 +496,7 @@ if 'predictions' in st.session_state:
                 '>
                     <h3 style='margin: 0 0 1rem 0;'>{scenario_name}</h3>
                     <p style='margin: 0.5rem 0; font-size: 1.2rem;'><strong>{data["unidades"]:,.0f}</strong> unidades</p>
-                    <p style='margin: 0.5rem 0; font-size: 1.2rem;'><strong>€{data["ingresos"]:,.2f}</strong> ingresos</p>
+                    <p style='margin: 0.5rem 0; font-size: 1.2rem;'><strong>{ingresos_convertidos}</strong> ingresos</p>
                 </div>
             """, unsafe_allow_html=True)
     
